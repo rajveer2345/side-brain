@@ -14,7 +14,7 @@
               "type": "markdown",
               "state": {
                 "file": "notes/Backend/nodejs.md",
-                "mode": "preview",
+                "mode": "source",
                 "source": false
               },
               "icon": "lucide-file",
@@ -78,8 +78,7 @@
       }
     ],
     "direction": "horizontal",
-    "width": 300,
-    "collapsed": true
+    "width": 258.51103591918945
   },
   "right": {
     "id": "b14112e7515b6061",
@@ -183,15 +182,25 @@
   },
   "active": "5659e41839afe5fb",
   "lastOpenFiles": [
-    "notes/infra/git_notes.md",
-    "notes/Backend/nodejs.md",
-    "notes/Backend/nodejs.md.tmp.46788.31729b71150c",
     "notes/Databrics/databrics_ansh_lamba_4hr_video_notes.md",
-    "notes/infra/git_notes.md.tmp.46788.b189ec05caf1",
-    "notes/infra",
-    "prompts.md",
-    "cv/mern cv/rajveer_sigh.pdf",
+    "notes/Databrics/pyspark.md",
+    "notes/Backend/nodejs.md",
+    "notes/Backend/express.md",
     "cv/ai_cv/rajveer_singh_ai_engineer.pdf",
+    "cv/mern cv/rajveer_sigh.pdf",
+    "notes/infra/git_notes.md",
+    "notes/Backend/mongodb.md",
+    "notes/Backend/system-design.md",
+    "notes/Backend/system-design.md.tmp.46788.97c1569241f6",
+    "notes/Backend/nodejs.md.tmp.46788.a9f4069d3177",
+    "notes/Backend/nodejs.md.tmp.46788.d926baad7abe",
+    "notes/AI/ml.md",
+    "notes/AI/dl/deep_learning",
+    "notes/AI/dl",
+    "notes/AI/ml",
+    "notes/Backend/nodejs.md.tmp.46788.31729b71150c",
+    "notes/infra/git_notes.md.tmp.46788.b189ec05caf1",
+    "prompts.md",
     "test.md"
   ]
 }

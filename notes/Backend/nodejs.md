@@ -1,7 +1,7 @@
 # Node.js Backend Interview Questions
 
-> **Target audience:** Backend Developer (Node.js, Express, MongoDB, REST APIs) — 2–5 years experience
-> **Format:** Question & Answer, with deep explanations, Mermaid diagrams, callouts, and follow-ups
+> **Target audience:** Backend Developer (Node.js, Express, MongoDB, REST APIs) — 2–8 years / up to senior
+> **Format:** Question & Answer. **Part 1 (Q1–Q12)** = deep dives. **Part 2** = senior-level rapid reference (concise answers, grouped by topic).
 > **Related notes:** [[git_notes]] · [[express]] · [[mongodb]] · [[system-design]]
 
 ---
@@ -29,6 +29,24 @@
 **Production**
 - [Q11. How do you prevent and detect memory leaks in production?](#q11-how-do-you-prevent-and-detect-memory-leaks-in-production)
 - [Q12. How do you secure a production Node.js REST API?](#q12-how-do-you-secure-a-production-nodejs-rest-api)
+
+---
+
+## Part 2 — Senior-Level Rapid Reference
+
+> [!NOTE] How Part 2 is organized
+> Concise, interview-speakable answers grouped by topic. Skim the **bold one-liner** first; the bullets/tables/callouts are for follow-ups.
+
+- [A. Node.js Core & Internals (advanced)](#a-nodejs-core--internals-advanced)
+- [B. Asynchronous JavaScript (advanced)](#b-asynchronous-javascript-advanced)
+- [C. Express & REST API Design](#c-express--rest-api-design)
+- [D. Authentication & Security](#d-authentication--security)
+- [E. MongoDB & Mongoose](#e-mongodb--mongoose)
+- [F. Performance & Scaling](#f-performance--scaling)
+- [G. Architecture & System Design](#g-architecture--system-design)
+- [H. Production, DevOps & Reliability](#h-production-devops--reliability)
+- [I. Testing](#i-testing)
+- [J. Rapid-Fire One-Liners](#j-rapid-fire-one-liners)
 
 ---
 
@@ -1063,6 +1081,641 @@ A typical secure stack: TLS terminated at the load balancer, `helmet` + CORS + r
 - Why is bcrypt preferred over SHA-256 for passwords?
 - What's the difference between authentication and authorization (and what's IDOR)?
 - Related: [[Q10. Design a rate limiter for a REST API]] · [[Q6. How do you handle errors in async Express routes]]
+
+---
+
+## A. Node.js Core & Internals (advanced)
+
+### A1. What is the libuv thread pool and how is it different from the event loop?
+
+**The event loop is single-threaded and orchestrates callbacks; the thread pool is a small set of OS threads (default 4) that libuv uses to run operations the OS has no async API for.**
+
+- Network I/O (sockets) is truly async at the OS level → handled by the event loop directly, **no thread pool**.
+- File system, DNS (`dns.lookup`), `crypto` (`pbkdf2`, `bcrypt`), and `zlib` use the **thread pool**.
+- Pool size is set by `UV_THREADPOOL_SIZE` (max 1024). If you run many concurrent `bcrypt`/`fs` ops, they queue once all 4 threads are busy.
+
+```bash
+UV_THREADPOOL_SIZE=8 node app.js   # raise pool for crypto/fs-heavy workloads
+```
+
+> [!TIP]
+> If hashing throughput stalls under load, the thread pool is often the bottleneck — raise `UV_THREADPOOL_SIZE` to ~number of cores. Related: [[Q1. What is the Event Loop]].
+
+---
+
+### A2. `child_process` vs `cluster` vs `worker_threads` — when to use which?
+
+| | Isolation | Memory sharing | Use case |
+|---|---|---|---|
+| **child_process** | Separate process | None (IPC messages) | Run external commands / scripts, isolate crashes |
+| **cluster** | Separate processes sharing a port | None | Scale an HTTP server across CPU cores |
+| **worker_threads** | Threads in one process | Yes (`SharedArrayBuffer`) | CPU-bound work (parsing, image, crypto) without blocking the loop |
+
+> [!NOTE]
+> Rule of thumb: **cluster for I/O concurrency across cores, worker_threads for CPU parallelism, child_process for running other programs.** See [[Q7. How does Node.js scale across CPU cores]].
+
+---
+
+### A3. CommonJS vs ES Modules — what actually differs?
+
+**CJS (`require`) loads synchronously and resolves at runtime; ESM (`import`) is static, async-friendly, and supports tree-shaking.**
+
+- CJS: `require()`/`module.exports`, has `__dirname`, `__filename`. Loaded & cached synchronously.
+- ESM: `import`/`export`, top-level `await`, strict mode by default. **No `__dirname`** — use `import.meta.url`.
+- Enable ESM via `"type": "module"` in `package.json` or `.mjs` extension.
+
+```js
+// __dirname replacement in ESM
+import { fileURLToPath } from 'url';
+import { dirname } from 'path';
+const __dirname = dirname(fileURLToPath(import.meta.url));
+```
+
+> [!WARNING]
+> You can `import` CJS from ESM, but **importing ESM from CJS requires dynamic `await import()`** — a common migration gotcha.
+
+---
+
+### A4. How does Node's module caching & resolution work? What about circular dependencies?
+
+**`require` caches a module's `exports` after first load (keyed by resolved path), so subsequent requires return the same instance.**
+
+- Resolution order: core module → `./` relative path → walk up `node_modules`.
+- **Circular dependency:** if A requires B and B requires A, B receives A's **partially-populated** exports (whatever was assigned before the cycle). Often returns `undefined` for not-yet-exported members.
+
+> [!TIP]
+> Fix cycles by extracting shared code into a third module, or `require` lazily inside the function rather than at the top.
+
+---
+
+### A5. What is the EventEmitter pattern?
+
+**Node's pub/sub primitive: objects emit named events and registered listeners react. It underpins streams, HTTP servers, sockets.**
+
+```js
+const EventEmitter = require('events');
+class Order extends EventEmitter {}
+const order = new Order();
+order.on('paid', (id) => console.log('fulfill', id));   // subscribe
+order.emit('paid', 42);                                  // publish (synchronous!)
+```
+
+> [!WARNING]
+> Listeners run **synchronously** in registration order. Adding listeners in a loop without removing them triggers the `MaxListenersExceededWarning` (default limit 10) — a classic leak signal. See [[Q11. How do you prevent and detect memory leaks]].
+
+---
+
+### A6. How do you gracefully shut down a Node server?
+
+**On `SIGTERM`/`SIGINT`, stop accepting new connections, finish in-flight requests, close DB/Redis, then exit — so deploys don't drop requests.**
+
+```js
+const server = app.listen(3000);
+process.on('SIGTERM', async () => {
+  server.close(async () => {        // stop new connections, drain existing
+    await mongoose.connection.close();
+    await redis.quit();
+    process.exit(0);
+  });
+  setTimeout(() => process.exit(1), 10_000).unref();  // force-exit safety net
+});
+```
+
+> [!IMPORTANT]
+> Essential for **zero-downtime deploys** in Kubernetes/PM2 — the orchestrator sends SIGTERM, then SIGKILL after a grace period.
+
+---
+
+### A7. What is `AsyncLocalStorage` and why is it useful?
+
+**It provides per-request context (like thread-local storage) that survives across `await` boundaries — without passing a context object through every function.**
+
+- Killer use case: attach a **request/correlation ID** so every log line in a request is traceable, even deep in the call stack.
+
+```js
+const { AsyncLocalStorage } = require('async_hooks');
+const als = new AsyncLocalStorage();
+app.use((req, res, next) => als.run({ reqId: crypto.randomUUID() }, next));
+function log(msg) { console.log(als.getStore()?.reqId, msg); }
+```
+
+---
+
+### A8. `Buffer.alloc` vs `Buffer.allocUnsafe`?
+
+**`alloc` zero-fills (safe); `allocUnsafe` skips zeroing (faster) but may expose old memory contents.**
+
+> [!WARNING]
+> Only use `allocUnsafe` if you immediately overwrite the whole buffer. Otherwise you risk leaking stale heap data — a real security concern.
+
+---
+
+### A9. How does V8 garbage collection work, and why does `--max-old-space-size` matter?
+
+**V8 uses a generational GC: a fast "scavenge" collector for short-lived objects (new space) and a slower mark-sweep-compact for long-lived ones (old space).** Default old-space cap is ~1.5–2 GB; raise it for memory-heavy apps:
+
+```bash
+node --max-old-space-size=4096 app.js   # 4 GB heap
+```
+
+> [!NOTE]
+> Most objects die young (the "generational hypothesis"), which is why the scavenger is cheap. Frequent full GCs (rising heap, growing GC pause time) signal a leak. See [[Q11. How do you prevent and detect memory leaks]].
+
+---
+
+## B. Asynchronous JavaScript (advanced)
+
+### B1. `Promise.all` vs `allSettled` vs `race` vs `any`?
+
+| Method | Resolves when | Rejects when | Returns |
+|---|---|---|---|
+| `all` | **all** fulfill | **any** rejects (fail-fast) | array of values |
+| `allSettled` | **all** settle | never | array of `{status,value/reason}` |
+| `race` | **first** settles (either way) | first settles as reject | that one result |
+| `any` | **first** fulfills | **all** reject | first value (else `AggregateError`) |
+
+> [!TIP]
+> Use `all` when every result is required and one failure should abort; `allSettled` for "do as much as possible, report failures" (e.g. fan-out to many services).
+
+---
+
+### B2. Why does `await` in a `forEach` not work, and how do you run async over a list?
+
+**`Array.forEach` ignores the returned promise — it doesn't await. Use `for...of` (sequential) or `Promise.all(map)` (parallel).**
+
+```js
+// ❌ doesn't wait
+items.forEach(async (i) => { await save(i); });
+
+// ✅ sequential (order/backpressure matters)
+for (const i of items) await save(i);
+
+// ✅ parallel (independent items)
+await Promise.all(items.map((i) => save(i)));
+```
+
+> [!WARNING]
+> Unbounded `Promise.all` over thousands of items can exhaust DB connections. Batch with a concurrency limit (e.g. `p-limit`).
+
+---
+
+### B3. How do you add a timeout / cancellation to an async operation?
+
+**Use `AbortController` (native) or race against a timeout promise.**
+
+```js
+const ac = new AbortController();
+const t = setTimeout(() => ac.abort(), 5000);
+try {
+  const res = await fetch(url, { signal: ac.signal });
+} finally { clearTimeout(t); }
+```
+
+---
+
+### B4. What's the difference between a macrotask and a microtask?
+
+**Microtasks (Promise callbacks, `queueMicrotask`, `process.nextTick`) drain completely before the next macrotask (timers, I/O, `setImmediate`).** This is why a promise chain always finishes before the next `setTimeout`. See [[Q2. What is the difference between process.nextTick]].
+
+---
+
+## C. Express & REST API Design
+
+### C1. What makes an API "RESTful"? Which methods are idempotent?
+
+**REST = stateless, resource-oriented over HTTP, using methods + status codes consistently.**
+
+| Method | Purpose | Idempotent? | Safe? |
+|---|---|---|---|
+| GET | read | ✅ | ✅ |
+| POST | create | ❌ | ❌ |
+| PUT | replace | ✅ | ❌ |
+| PATCH | partial update | ❌ (usually) | ❌ |
+| DELETE | remove | ✅ | ❌ |
+
+> [!NOTE]
+> **Idempotent** = same result no matter how many times you repeat it. Matters for safe client retries. `POST` isn't idempotent → use an **idempotency key** to dedupe (see [[#G4. What is an idempotency key]]).
+
+---
+
+### C2. Status code cheat-sheet every backend dev must know
+
+> [!question]- Common HTTP status codes
+> - **200** OK · **201** Created · **204** No Content (success, empty body)
+> - **301/302** Moved · **304** Not Modified (caching)
+> - **400** Bad Request (validation) · **401** Unauthenticated · **403** Forbidden (authz) · **404** Not Found
+> - **409** Conflict (duplicate/version) · **422** Unprocessable Entity · **429** Too Many Requests (rate limit)
+> - **500** Internal Error · **502** Bad Gateway · **503** Service Unavailable · **504** Gateway Timeout
+
+---
+
+### C3. `app.use` vs `express.Router` — and why does order matter?
+
+**`app.use` mounts middleware globally (or at a path prefix); `Router` is a mini-app for grouping routes modularly.** Express matches **top-to-bottom**, first match wins — so specific routes must precede generic ones, and error/404 handlers go **last**.
+
+```js
+const users = express.Router();
+users.get('/:id', getUser);
+app.use('/api/users', users);   // modular mounting
+```
+
+---
+
+### C4. Offset vs cursor pagination — which scales?
+
+**Offset (`skip/limit`) is simple but degrades on deep pages (the DB must count/skip N docs). Cursor (keyset) pagination uses the last seen value and stays fast at any depth.**
+
+```js
+// Cursor pagination — O(1)-ish, stable under inserts
+const page = await Order.find({ _id: { $gt: lastId } })
+  .sort({ _id: 1 }).limit(20);
+```
+
+> [!TIP]
+> Use cursor pagination for infinite scroll / large datasets; offset is fine for small admin tables. Related: [[Q8. How do MongoDB indexes work]].
+
+---
+
+### C5. How does HTTP caching work (ETag, Cache-Control)?
+
+**`Cache-Control` tells clients/CDNs how long to cache; `ETag` is a content fingerprint enabling `304 Not Modified` revalidation (saves bandwidth).** Express sets ETags on responses automatically.
+
+```
+Cache-Control: public, max-age=60
+ETag: "a1b2c3"        → client sends If-None-Match → 304 if unchanged
+```
+
+---
+
+### C6. Express vs Fastify vs Koa vs NestJS?
+
+> [!question]- Framework comparison
+> - **Express** — minimal, ubiquitous, huge ecosystem; manual structure.
+> - **Fastify** — faster (schema-based serialization), built-in validation/logging.
+> - **Koa** — async/await-first, tiny core, middleware via `ctx`.
+> - **NestJS** — opinionated, TypeScript, DI + modules (Angular-like); great for large teams.
+
+---
+
+## D. Authentication & Security
+
+### D1. Sessions vs JWT — trade-offs?
+
+| | Sessions (server-side) | JWT (stateless) |
+|---|---|---|
+| State | Stored server/Redis | Self-contained token |
+| Scaling | Needs shared store | No server state |
+| Revocation | Easy (delete session) | **Hard** (need blocklist) |
+| Best for | Traditional web apps | APIs, microservices, mobile |
+
+> [!IMPORTANT]
+> JWT's biggest weakness is **revocation** — you can't un-issue a valid token. Mitigate with **short-lived access tokens + refresh tokens**.
+
+---
+
+### D2. Explain the access + refresh token flow.
+
+```mermaid
+sequenceDiagram
+    participant C as Client
+    participant A as Auth Server
+    participant R as API
+    C->>A: login (credentials)
+    A-->>C: access token (15m) + refresh token (7d)
+    C->>R: request + access token
+    R-->>C: 200 (token valid)
+    Note over C,R: access token expires
+    C->>A: refresh token
+    A-->>C: new access token
+```
+
+> [!TIP]
+> Store the **refresh token in an httpOnly, Secure cookie** (not localStorage → XSS-safe) and keep access tokens short-lived. Rotate refresh tokens on use.
+
+---
+
+### D3. CSRF vs XSS — what's the difference and the defense?
+
+- **XSS** (Cross-Site Scripting): attacker injects JS into your page → steals tokens/data. **Defense:** escape/encode output, CSP headers (`helmet`), never `innerHTML` untrusted data.
+- **CSRF** (Cross-Site Request Forgery): tricks a logged-in user's browser into sending an unwanted request using their cookies. **Defense:** CSRF tokens, `SameSite` cookies, check `Origin`.
+
+> [!WARNING]
+> CSRF mainly affects **cookie-based** auth. Token-in-header (JWT) APIs are largely immune to CSRF but **more exposed to XSS** if tokens live in JS-accessible storage.
+
+---
+
+### D4. Why bcrypt/argon2 over SHA-256 for passwords?
+
+**Password hashes must be *slow* and *salted*. SHA-256 is fast → enables billions of brute-force guesses/sec. bcrypt/argon2 are deliberately slow with a tunable cost factor and built-in salting.**
+
+> [!NOTE]
+> **argon2** (memory-hard) is the modern recommendation; **bcrypt** is the proven, widely-available default. See [[Q12. How do you secure a production Node.js REST API]].
+
+---
+
+## E. MongoDB & Mongoose
+
+### E1. Embedding vs referencing — how do you decide?
+
+**Embed for data read together and bounded in size ("contains"); reference for large, shared, or independently-queried data ("relates to").**
+
+| Embed when | Reference when |
+|---|---|
+| 1:few, read together | 1:many / many:many |
+| Subdoc has no independent life | Entity queried on its own |
+| Bounded growth | Unbounded arrays (avoid!) |
+
+> [!WARNING]
+> Unbounded embedded arrays (e.g. all comments inside a post) hit the **16 MB document limit** and slow every read. Reference instead.
+
+---
+
+### E2. `populate` and the N+1 problem in Mongoose?
+
+**`populate` resolves referenced documents — but naive use inside a loop fires one query per item (N+1).** Populate once over the whole result set, or use `$lookup` in aggregation.
+
+```js
+// ✅ one query for posts + one batched for authors
+const posts = await Post.find().populate('author');
+```
+
+See [[Q9. An API endpoint is slow under load]] for the N+1 fix pattern.
+
+---
+
+### E3. What does `.lean()` do?
+
+**Returns plain JS objects instead of full Mongoose documents — skipping hydration, getters, and change-tracking.** Much faster and lighter for **read-only** queries.
+
+> [!TIP]
+> Use `.lean()` on read endpoints; omit it when you need `.save()`, virtuals, or document methods.
+
+---
+
+### E4. How do MongoDB transactions work?
+
+**Multi-document ACID transactions run inside a session and require a replica set. All operations commit or abort together.**
+
+```js
+const session = await mongoose.startSession();
+await session.withTransaction(async () => {
+  await Account.updateOne({ _id: a }, { $inc: { bal: -100 } }, { session });
+  await Account.updateOne({ _id: b }, { $inc: { bal: +100 } }, { session });
+});
+```
+
+> [!WARNING]
+> Transactions add overhead and hold locks — prefer a good **schema design** (embed related data) so you rarely need them. Classic valid use: money transfers.
+
+---
+
+### E5. What are read/write concerns and replica sets?
+
+**A replica set is a primary + secondaries replicating data for HA. Write concern (`w`) = how many nodes must ack a write; read preference = which node serves reads.**
+
+> [!NOTE]
+> `w: "majority"` ensures durability (survives primary failure). Reading from secondaries scales reads but risks **stale data** (eventual consistency).
+
+---
+
+### E6. How do you handle concurrent updates safely (optimistic concurrency)?
+
+**Use a version field (`__v` / a `version` number); the update only succeeds if the version matches, otherwise retry.** Prevents lost updates without locking.
+
+```js
+await Doc.updateOne({ _id, version: v }, { $set: data, $inc: { version: 1 } });
+// matchedCount === 0 → someone else updated → reload & retry
+```
+
+---
+
+## F. Performance & Scaling
+
+### F1. Explain caching strategies.
+
+```mermaid
+flowchart LR
+    APP[App] -->|1 miss| C[(Cache)]
+    C -->|2| DB[(DB)]
+    DB -->|3 write to cache| C
+    C -->|4| APP
+```
+
+> [!question]- Cache patterns
+> - **Cache-aside (lazy):** app checks cache, on miss loads from DB and populates cache. Most common.
+> - **Write-through:** writes go to cache + DB together (consistent, slower writes).
+> - **Write-back:** write to cache, flush to DB async (fast, risk of loss).
+> - **TTL + invalidation:** always expire keys; invalidate on write to avoid stale reads.
+
+> [!IMPORTANT]
+> The two hard problems: **cache invalidation** (stale data) and **stampede** (many misses hit DB at once → use locks / `stale-while-revalidate`).
+
+---
+
+### F2. Common Redis use cases in a Node backend?
+
+**Caching, session store, rate limiting, distributed locks, pub/sub, job queues (BullMQ), leaderboards.** It's single-threaded and in-memory → microsecond ops. See [[Q10. Design a rate limiter for a REST API]].
+
+---
+
+### F3. Why must app servers be stateless to scale horizontally?
+
+**If each instance holds state (sessions, in-memory cache, uploaded files locally), requests routed to a different instance break.** Externalize state to Redis/DB/object storage so any instance can serve any request behind a load balancer. See [[Q7. How does Node.js scale across CPU cores]].
+
+---
+
+## G. Architecture & System Design
+
+### G1. Monolith vs microservices — when to choose which?
+
+**Start with a (modular) monolith; move to microservices when teams/scaling/independent-deploy needs justify the operational cost.**
+
+| Monolith | Microservices |
+|---|---|
+| Simple deploy, easy local dev | Independent scaling & deploy |
+| One DB, easy transactions | Per-service DB, eventual consistency |
+| Scales as a unit | Network latency, distributed debugging |
+
+> [!WARNING]
+> Microservices trade code complexity for **distributed-systems complexity** (network failures, data consistency, observability). Don't adopt prematurely.
+
+---
+
+### G2. How do you structure an Express app (layered architecture)?
+
+**Separate concerns: Route → Controller (HTTP) → Service (business logic) → Repository/Model (data).** Keeps logic testable and framework-agnostic.
+
+```
+routes/      → define endpoints + middleware
+controllers/ → parse req, call service, shape response
+services/    → business rules (no req/res here)
+models/      → Mongoose schemas / data access
+```
+
+> [!TIP]
+> Keep `req`/`res` out of services — that makes business logic unit-testable and reusable (e.g. from a queue worker).
+
+---
+
+### G3. When and why use a message queue?
+
+**Decouple producers from consumers for async work, smoothing load spikes and surviving failures via retries.** Use cases: email/notifications, image processing, webhooks, order pipelines.
+
+```mermaid
+flowchart LR
+    API[API] -->|enqueue job| Q[(Queue<br/>BullMQ/RabbitMQ/Kafka)]
+    Q --> W1[Worker 1]
+    Q --> W2[Worker 2]
+```
+
+> [!NOTE]
+> **BullMQ** (Redis) for app job queues; **RabbitMQ** for routing/RPC; **Kafka** for high-throughput event streaming/log. Workers should be **idempotent** (a job may be retried).
+
+---
+
+### G4. What is an idempotency key?
+
+**A client-supplied unique key (e.g. `Idempotency-Key` header) the server records, so retrying the same request doesn't create duplicate side effects (double charge, double order).**
+
+> [!IMPORTANT]
+> Essential for **payments** and any non-idempotent `POST`. Stripe's API is the canonical example.
+
+---
+
+### G5. Explain the circuit breaker pattern.
+
+**Wrap calls to a flaky dependency; after N failures the breaker "opens" and fails fast (no waiting), periodically testing recovery — preventing cascading failures.**
+
+```mermaid
+stateDiagram-v2
+    [*] --> Closed
+    Closed --> Open: failures exceed threshold
+    Open --> HalfOpen: after cooldown
+    HalfOpen --> Closed: trial succeeds
+    HalfOpen --> Open: trial fails
+```
+
+> [!TIP]
+> Combine with **timeouts** + **retries with exponential backoff + jitter**. Libraries: `opossum`.
+
+---
+
+### G6. WebSockets vs Server-Sent Events vs polling?
+
+| | Direction | Use case |
+|---|---|---|
+| **Polling** | client pulls | simple, infrequent updates |
+| **SSE** | server → client (one-way) | live feeds, notifications |
+| **WebSockets** | full duplex | chat, gaming, collaborative editing |
+
+> [!NOTE]
+> Socket.io adds reconnection, rooms, and fallback on top of WebSockets. For horizontal scaling, use the **Redis adapter** so events reach clients on any instance.
+
+---
+
+### G7. GraphQL vs REST?
+
+**REST = multiple fixed endpoints; GraphQL = one endpoint, client specifies exactly the fields it needs (no over/under-fetching).** GraphQL adds complexity (N+1 resolvers → use DataLoader, caching is harder). Choose REST for simple/cacheable APIs, GraphQL for rich client-driven data needs.
+
+---
+
+## H. Production, DevOps & Reliability
+
+### H1. What are liveness and readiness health checks?
+
+**Liveness = "is the process alive?" (restart if not). Readiness = "can it serve traffic?" (DB connected, warmed up).** Orchestrators (K8s) use these to restart and to route traffic.
+
+```js
+app.get('/health/live', (_, res) => res.sendStatus(200));
+app.get('/health/ready', async (_, res) =>
+  mongoose.connection.readyState === 1 ? res.sendStatus(200) : res.sendStatus(503));
+```
+
+---
+
+### H2. How do you handle `uncaughtException` and `unhandledRejection`?
+
+**Log them and shut down gracefully — the process is in an unknown state, so don't keep serving.** Let the supervisor restart a clean instance.
+
+```js
+process.on('unhandledRejection', (reason) => { console.error(reason); process.exit(1); });
+process.on('uncaughtException', (err) => { console.error(err); process.exit(1); });
+```
+
+> [!WARNING]
+> Never swallow these to "keep the server up" — you risk corrupt state and memory leaks. See [[Q6. How do you handle errors in async Express routes]].
+
+---
+
+### H3. What does observability mean (the three pillars)?
+
+**Logs (what happened), Metrics (aggregate numbers/rates), Traces (request path across services).** Add a **correlation ID** per request (via [[#A7. What is AsyncLocalStorage]]) to tie them together. Tools: pino/Winston, Prometheus/Grafana, OpenTelemetry.
+
+> [!TIP]
+> Use **structured (JSON) logging** — searchable and machine-parseable — not `console.log` strings, in production.
+
+---
+
+### H4. What is the 12-Factor App (the points that matter most)?
+
+> [!question]- Key 12-factor principles
+> - **Config in environment** (not code) · **Stateless processes** · **Backing services as attached resources** · **Logs as event streams (stdout)** · **Dev/prod parity** · **Disposability (fast startup, graceful shutdown)** · **Explicit dependencies (lockfile)**.
+
+---
+
+### H5. How do you achieve zero-downtime deploys?
+
+**Rolling deploy + graceful shutdown + health checks: bring up new instances, wait for readiness, drain old ones (SIGTERM → finish in-flight → exit).** See [[#A6. How do you gracefully shut down a Node server]].
+
+---
+
+## I. Testing
+
+### I1. Unit vs integration vs e2e — the test pyramid?
+
+**Many fast unit tests (isolated logic), fewer integration tests (modules + DB), fewest e2e tests (full system).** The pyramid keeps suites fast and reliable.
+
+### I2. How do you test Express routes?
+
+**Use `supertest` to make in-process HTTP requests without binding a port.**
+
+```js
+const request = require('supertest');
+it('GET /users/:id returns 404 when missing', async () => {
+  const res = await request(app).get('/users/999');
+  expect(res.status).toBe(404);
+});
+```
+
+> [!TIP]
+> Mock external services (payment, email) and use an in-memory or test MongoDB (`mongodb-memory-server`) for integration tests. Keep tests **deterministic** (no real network/time).
+
+---
+
+## J. Rapid-Fire One-Liners
+
+> [!question]- Node / npm essentials
+> - **`npm install` vs `npm ci`** → `ci` does a clean, lockfile-exact, reproducible install (use in CI/CD).
+> - **dependencies vs devDependencies vs peerDependencies** → runtime / build-&-test-only / "host app must provide this".
+> - **semver `^1.2.3` vs `~1.2.3`** → `^` allows minor+patch updates, `~` allows patch only.
+> - **`package-lock.json`** → locks the exact dependency tree for reproducible builds.
+> - **`process.env`** → environment variables; load via `dotenv` in dev, real env in prod.
+> - **`npx`** → run a package binary without installing it globally.
+
+> [!question]- JavaScript gotchas
+> - **`==` vs `===`** → `==` coerces types, `===` strict (always prefer `===`).
+> - **`null` vs `undefined`** → `undefined` = never assigned; `null` = intentional empty.
+> - **`var` vs `let` vs `const`** → `var` function-scoped + hoisted; `let`/`const` block-scoped.
+> - **Closures** → a function retaining access to its outer scope's variables after that scope returns.
+> - **`this`** → depends on call site; arrow functions capture `this` lexically.
+> - **Shallow vs deep copy** → spread/`Object.assign` are shallow; use `structuredClone()` for deep.
+
+> [!question]- HTTP / API quick hits
+> - **PUT vs PATCH** → full replace vs partial update.
+> - **401 vs 403** → not authenticated vs authenticated-but-forbidden.
+> - **CORS** → browser-enforced; server sends `Access-Control-Allow-Origin`. Preflight `OPTIONS` for non-simple requests.
+> - **Idempotency** → GET/PUT/DELETE yes; POST no.
+> - **Content negotiation** → `Accept` header drives response format.
 
 ---
 
