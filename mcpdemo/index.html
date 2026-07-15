@@ -1,0 +1,108 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta
+      name="description"
+      content="A developer portfolio page generated from the provided Figma design reference."
+    />
+    <title>Developer Portfolio</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <div class="page-shell">
+      <header class="site-header">
+        <a class="brand" href="#home">Alex Carter</a>
+        <nav class="site-nav" aria-label="Primary navigation">
+          <a href="#about">About</a>
+          <a href="#projects">Projects</a>
+          <a href="#contact">Contact</a>
+        </nav>
+      </header>
+
+      <main id="home">
+        <section class="hero" aria-labelledby="hero-title">
+          <div class="hero-copy">
+            <p class="eyebrow">Frontend Developer</p>
+            <h1 id="hero-title">Building polished digital experiences with modern web tech.</h1>
+            <p class="lead">
+              I create responsive, accessible interfaces that feel fast, clean, and thoughtfully designed from the very first scroll.
+            </p>
+            <div class="hero-actions">
+              <a class="button button-primary" href="#projects">View work</a>
+              <a class="button button-secondary" href="#contact">Let’s talk</a>
+            </div>
+            <ul class="hero-highlights" aria-label="Key strengths">
+              <li>UI engineering</li>
+              <li>Design systems</li>
+              <li>Performance &amp; accessibility</li>
+            </ul>
+          </div>
+
+          <div class="hero-card" aria-label="Figma design preview">
+            <img src="figma-thumbnail.png" alt="Preview of the Figma portfolio design" />
+          </div>
+        </section>
+
+        <section id="about" class="content-section" aria-labelledby="about-title">
+          <div class="section-heading">
+            <p class="eyebrow">About me</p>
+            <h2 id="about-title">Thoughtful development, from concept to launch.</h2>
+          </div>
+          <div class="about-grid">
+            <article class="info-card">
+              <h3>Product-minded</h3>
+              <p>I turn complex requirements into elegant interfaces that balance business goals with user clarity.</p>
+            </article>
+            <article class="info-card">
+              <h3>Craft-focused</h3>
+              <p>Reliable components, scalable structure, and refined interactions make the experience feel effortless.</p>
+            </article>
+            <article class="info-card">
+              <h3>Accessible by default</h3>
+              <p>Keyboard support, strong contrast, and semantic markup are built into every implementation.</p>
+            </article>
+          </div>
+        </section>
+
+        <section id="projects" class="content-section" aria-labelledby="projects-title">
+          <div class="section-heading">
+            <p class="eyebrow">Selected work</p>
+            <h2 id="projects-title">Recent projects that blend usability and impact.</h2>
+          </div>
+          <div class="projects-grid">
+            <article class="project-card">
+              <h3>Northstar Studio</h3>
+              <p>Design system and marketing site for a fast-growing product team.</p>
+            </article>
+            <article class="project-card">
+              <h3>Pulse Analytics</h3>
+              <p>Interactive dashboard experience engineered for clarity and speed.</p>
+            </article>
+            <article class="project-card">
+              <h3>Harbor Commerce</h3>
+              <p>Conversion-focused storefront with modular UI and thoughtful motion.</p>
+            </article>
+          </div>
+        </section>
+      </main>
+
+      <footer id="contact" class="site-footer">
+        <div>
+          <p class="eyebrow">Let’s build something excellent</p>
+          <p>Open to freelance collaborations, full-time roles, and product design partnerships.</p>
+        </div>
+        <a class="button button-primary" href="mailto:hello@alexcarter.dev">Get in touch</a>
+      </footer>
+    </div>
+
+    <script src="script.js"></script>
+  </body>
+</html>
